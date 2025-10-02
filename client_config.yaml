@@ -1,0 +1,216 @@
+model_settings:
+  start_date: '2021-12-01'
+  num_periods: 12
+  output_directory: output
+income_statement:
+  revenue_streams:
+    stream_1:
+      name: Revenue Stream 1
+      initial_value: 345000.0
+      growth_rate: 1.01
+    stream_2:
+      name: Revenue Stream 2
+      initial_value: 125000.0
+      growth_rate: 1.008
+    stream_3:
+      name: Revenue Stream 3
+      initial_value: 57200.0
+      growth_rate: 1.003
+    stream_4:
+      name: Revenue Stream 4
+      initial_value: 5300.0
+      growth_rate: 1.0002
+  sales_returns:
+    initial_value: -4138.65
+    rate: 0.005
+  cogs:
+    variable_costs:
+      initial_value: 157388.6565
+      growth_rate: 1.009
+    fixed_costs:
+      initial_value: 25000.0
+      changes:
+        period_5: 35000
+  operating_expenses:
+    ga_expenses: 27895
+    salaries:
+      total_salaries: 220500
+      benefits: 22050
+      payroll_taxes: 18700
+      processing_fees: 1000
+      bonuses: 10000
+      commissions: 16000
+  depreciation_amortization:
+    depreciation: 120
+    amortization: 100
+  other_income_expenses:
+    interest_income: 1000
+    other_income: 230
+    interest_expense: 430
+    bad_debt: 350
+  taxes:
+    income_taxes: 1500
+balance_sheet:
+  beginning_balances:
+    cash: 10000.0
+    inventory: 5000.0
+    accounts_receivable: 5000.0
+    other_receivable: 1000.0
+    prepaid_expenses: 2000.0
+    prepaid_insurance: 1000.0
+    unbilled_revenue: 1000.0
+    other_current_assets: 1000.0
+    accounts_payable: 2000.0
+    accrued_expenses: 1000.0
+    accrued_taxes: 1000.0
+    other_current_liabilities: 2000.0
+  period_values:
+    inventory:
+    - 4000.0
+    - 3000.0
+    - 5000.0
+    - 6500.0
+    - 2000.0
+    - 6200.0
+    - 5500.0
+    - 6700.0
+    - 5600.0
+    - 6200.0
+    - 3400.0
+    - 6200.0
+    accounts_receivable:
+    - 6000.0
+    - 7000.0
+    - 8600.0
+    - 3400.0
+    - 3800.0
+    - 7000.0
+    - 6000.0
+    - 5500.0
+    - 3700.0
+    - 7000.0
+    - 5000.0
+    - 4000.0
+    accounts_payable:
+    - 3588.0
+    - 2691.0
+    - 4485.0
+    - 5830.5
+    - 1794.0
+    - 5561.4
+    - 4933.5
+    - 6009.9
+    - 5023.2
+    - 5561.4
+    - 3049.7999999999997
+    - 5561.4
+    accrued_expenses:
+    - 1200.0
+    - 1044.0
+    - 1054.44
+    - 1265.328
+    - 1100.83
+    - 1111.8437136000002
+    - 1334.2124563200002
+    - 1160.7648369984001
+    - 1172.372485368384
+    - 1406.8469824420608
+    - 1223.956874724593
+    - 1236.1964434718388
+    other_current_liabilities:
+    - 1000.0
+    - 1120.0
+    - 1116.64
+    - 1113.29008
+    - 1109.95
+    - 1200.0
+    - 1196.3999999999999
+    - 1192.8108
+    - 1340.0
+    - 1335.9800000000002
+    - 1331.9720600000003
+    - 1327.9761438200003
+    other_current_assets_components:
+      other_receivable:
+      - 1000.0
+      - 1012.3
+      - 1024.75129
+      - 1037.3557308670001
+      - 1050.1152063566642
+      - 1063.031623394851
+      - 1076.1069123626078
+      - 1089.3430273846677
+      - 1102.7419466214992
+      - 1116.3056725649435
+      - 1130.0362323374925
+      - 1143.9356779952434
+      prepaid_expenses:
+      - 2000.0
+      - 1979.98
+      - 1960.1604002000001
+      - 1940.5391945939982
+      - 1921.1143972561124
+      - 1901.884042139579
+      - 1882.8461828777615
+      - 1863.9988925871553
+      - 1845.3402636723579
+      - 1826.8684076329978
+      - 1808.5814548725916
+      - 1790.477554509317
+      prepaid_insurance:
+      - 1500.0
+      - 1484.9999999999998
+      - 1470.1499999999999
+      - 1455.4485
+      - 1440.8940149999999
+      - 1426.4850748499998
+      - 1412.2202241014998
+      - 1398.0980218604848
+      - 1384.11704164188
+      - 1370.2758712254613
+      - 1356.5731125132065
+      - 1343.0073813880745
+      unbilled_revenue:
+      - 1250.0
+      - 1256.2499999999998
+      - 1262.5312499999998
+      - 1268.8439062499995
+      - 1275.1881257812495
+      - 1281.5640664101554
+      - 1287.9718867422062
+      - 1294.411746175917
+      - 1300.8838049067965
+      - 1307.3882239313305
+      - 1313.9251650509868
+      - 1320.4947908762417
+      other_current_assets:
+      - 1100.0
+      - 1137.4
+      - 1176.0716000000002
+      - 1216.0580344000002
+      - 1257.4040075696003
+      - 1300.1557438269667
+      - 1344.3610391170835
+      - 1390.0693144470645
+      - 1437.3316711382647
+      - 1486.2009479569658
+      - 1536.7317801875026
+      - 1588.9806607138778
+  fixed_assets:
+    ppe_gross: 205000
+    intangibles_gross: 0
+  liabilities_constants:
+    credit_cards: 1500
+    notes_payable: 35000
+    deferred_income: 5000
+    accrued_taxes: 1000
+    long_term_debt: 100000
+    deferred_tax_liabilities: 3000
+    other_liabilities: 5000
+  equity:
+    paid_in_capital: 10000
+    common_stock: 25500
+    preferred_stock: 10000
+    capital_round_1: 10000
+    capital_round_2: 10000
+    capital_round_3: 10000
