@@ -1,0 +1,67 @@
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,Financial Reporting,,,,,,,,,,,,,,,,,,,,,,,,
+,Three Statement Model,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,How to use this template:,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,"This is template is designed to help finance professionals establish financial reporting best practices. The template contains formulas to prepopulate value on the Balance Sheet and Cash Flow based on input from other tabs.
+
+To use the model: 
+
+1. Replace the chart of accounts in each tab with the chart of accounts for your organization. 
+
+2. Update the 'Model Start Date' value within this tab to the month on which you'd like to start the model.
+
+3. Enter or copy the appropriate historical values into the report.
+
+4. Validate that the calculations are working appropriately and utilize the 'checks' built into the report to ensure every account is accounted for appropriately. 
+
+5. Happy reporting!
+
+",,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,Model Start Date,12/1/21,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,Model Components (aka spreadsheet tabs),,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,Income Statement,2nd Tab,Use this tab to report on your Income Statement values.,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,Balance Sheet,3rd Tab,Use this tab to report on your Balance Sheet values.,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,Cash Flow Statement,4th Tab,Use this tab to report on your Statement of Cash Flows.,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,Model Legend,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,Inputs,ABC,These cells are where you'll input/update data (input roster file and new hire assumptions).,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,Calculations,ABC,"These cells are formulas that produce model data, and are used in outputs. Don't modify the formulas in these cells.",,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
+,,Outputs,ABC,"These cells remain black, and are linked to the inputs and sub-calculations. The formulas in these cells should remain unchanged.",,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,
