@@ -10,8 +10,12 @@
 
 """Generate an Excel workbook that mirrors financial_model.py logic."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List
 
 import yaml
 import xlsxwriter
@@ -19,12 +23,7 @@ from dateutil.relativedelta import relativedelta
 
 CONFIG_FILE = Path("client_config.yaml")
 OUTPUT_PATH = Path("output") / "financial_model.xlsx"
-
-
-def sheet_ref(sheet_name: str, coord: str) -> str:
-    """Return an absolute cell reference including sheet qualification."""
-    quoted = f"'{sheet_name}'" if " " in sheet_name else sheet_name
-    return f"{quoted}!${coord.replace('$', '')}"
+FIRST_DATA_COLUMN = 1  # Column B is the first period column
 
 
 def make_absolute(coord: str) -> str:
@@ -32,6 +31,13 @@ def make_absolute(coord: str) -> str:
     col = "".join(c for c in coord if c.isalpha())
     row = "".join(c for c in coord if c.isdigit())
     return f"${col}${row}" if col and row else coord
+
+
+def sheet_ref(sheet_name: str, coord: str) -> str:
+    """Return an absolute cell reference including sheet qualification."""
+    quoted = f"'{sheet_name}'" if " " in sheet_name else sheet_name
+    absolute_coord = coord if coord.startswith("$") else make_absolute(coord)
+    return f"{quoted}!{absolute_coord}"
 
 
 def col_letter(col_idx: int) -> str:
@@ -49,6 +55,173 @@ def coord_from_indices(row: int, col: int) -> str:
     return f"{col_letter(col)}{row + 1}"
 
 
+@dataclass
+class WorkbookFormats:
+    header_blue: xlsxwriter.format.Format
+    section_header: xlsxwriter.format.Format
+    subsection_header: xlsxwriter.format.Format
+    line_item: xlsxwriter.format.Format
+    line_item_bold: xlsxwriter.format.Format
+    currency: xlsxwriter.format.Format
+    percent: xlsxwriter.format.Format
+    date_month: xlsxwriter.format.Format
+    bold: xlsxwriter.format.Format
+    date: xlsxwriter.format.Format
+
+
+@dataclass
+class RevenueStreamRefs:
+    initial: str
+    growth: str
+
+
+@dataclass
+class AssumptionsContext:
+    sheet: str
+    revenue_streams: Dict[str, RevenueStreamRefs]
+    sales_returns_initial: str
+    sales_returns_rate: str
+    variable_cost_initial: str
+    variable_cost_growth: str
+    fixed_cost_initial: str
+    fixed_cost_after: str
+    ga_expenses: str
+    salary_lines: Dict[str, str]
+    other_income_expense: Dict[str, str]
+    depreciation: str
+    amortization: str
+    income_tax: str
+    beginning_balances: Dict[str, str]
+    oca_keys: List[str]
+    fixed_assets: Dict[str, str]
+    additional_fixed_assets: Dict[str, str]
+    liabilities: Dict[str, str]
+    equity: Dict[str, str]
+
+
+@dataclass
+class InputsContext:
+    sheet: str
+    header_to_column: Dict[str, int]
+
+
+@dataclass
+class IncomeStatementContext:
+    sheet: str
+    net_income_row: int
+    depreciation_row: int
+    amortization_row: int
+    total_other_row: int
+
+
+@dataclass
+class BalanceSheetContext:
+    sheet: str
+    cash_row: int
+    accounts_receivable_row: int
+    inventory_row: int
+    total_oca_row: int
+    accounts_payable_row: int
+    accrued_expenses_row: int
+    other_current_liabilities_row: int
+    total_current_liabilities_row: int
+    total_assets_row: int
+    total_liabilities_row: int
+    total_equity_row: int
+    total_liab_equity_row: int
+
+
+def create_formats(wb: xlsxwriter.Workbook) -> WorkbookFormats:
+    """Create and bundle the formats used across sheets."""
+
+    header_blue = wb.add_format(
+        {
+            "bold": True,
+            "bg_color": "#002060",
+            "font_color": "white",
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+        }
+    )
+
+    section_header = wb.add_format({"bold": True, "bg_color": "#B4C7E7", "border": 1})
+    subsection_header = wb.add_format({"bold": True, "italic": True, "indent": 1})
+    line_item = wb.add_format({"indent": 2})
+    line_item_bold = wb.add_format({"bold": True, "indent": 2})
+    currency_fmt = wb.add_format({"num_format": "$#,##0"})
+    percent_fmt = wb.add_format({"num_format": "0.00%"})
+    date_month_fmt = wb.add_format({"num_format": "mmm-yy", "align": "center"})
+    bold = wb.add_format({"bold": True})
+    date_fmt = wb.add_format({"num_format": "mm/dd/yyyy"})
+
+    return WorkbookFormats(
+        header_blue=header_blue,
+        section_header=section_header,
+        subsection_header=subsection_header,
+        line_item=line_item,
+        line_item_bold=line_item_bold,
+        currency=currency_fmt,
+        percent=percent_fmt,
+        date_month=date_month_fmt,
+        bold=bold,
+        date=date_fmt,
+    )
+
+
+def write_constant_series(
+    ws: xlsxwriter.worksheet.Worksheet,
+    row: int,
+    num_periods: int,
+    ref: str,
+    fmt: xlsxwriter.format.Format,
+    sign: int = 1,
+) -> None:
+    """Write a constant series that references the same cell every period."""
+
+    prefix = "-" if sign < 0 else ""
+    for period in range(num_periods):
+        col = FIRST_DATA_COLUMN + period
+        ws.write_formula(row, col, f"={prefix}{ref}", fmt)
+
+
+def write_growth_series(
+    ws: xlsxwriter.worksheet.Worksheet,
+    row: int,
+    num_periods: int,
+    initial_ref: str,
+    growth_ref: str,
+    fmt: xlsxwriter.format.Format,
+) -> None:
+    """Write a geometric growth series driven by an initial value and a growth factor."""
+
+    for period in range(num_periods):
+        col = FIRST_DATA_COLUMN + period
+        if period == 0:
+            ws.write_formula(row, col, f"={initial_ref}", fmt)
+        else:
+            prev_col_letter = col_letter(col - 1)
+            ws.write_formula(row, col, f"={prev_col_letter}{row + 1}*{growth_ref}", fmt)
+
+
+def write_running_decrement_series(
+    ws: xlsxwriter.worksheet.Worksheet,
+    row: int,
+    num_periods: int,
+    decrement_ref: str,
+    fmt: xlsxwriter.format.Format,
+) -> None:
+    """Accumulate a negative balance by subtracting the same amount each period."""
+
+    for period in range(num_periods):
+        col = FIRST_DATA_COLUMN + period
+        if period == 0:
+            ws.write_formula(row, col, f"=-{decrement_ref}", fmt)
+        else:
+            prev_col_letter = col_letter(col - 1)
+            ws.write_formula(row, col, f"={prev_col_letter}{row + 1}-{decrement_ref}", fmt)
+
+
 def create_workbook(config: dict, output_path: Path) -> None:
     model_settings = config["model_settings"]
     income_config = config["income_statement"]
@@ -58,137 +231,167 @@ def create_workbook(config: dict, output_path: Path) -> None:
     num_periods = int(model_settings["num_periods"])
 
     wb = xlsxwriter.Workbook(str(output_path))
+    formats = create_formats(wb)
 
-    # Formats
-    header_blue = wb.add_format({
-        "bold": True,
-        "bg_color": "#002060",
-        "font_color": "white",
-        "align": "center",
-        "valign": "vcenter",
-        "border": 1,
-    })
+    assumptions_ctx = build_assumptions_sheet(wb, config, formats)
+    inputs_ctx = build_inputs_sheet(wb, balance_config, num_periods, formats)
+    income_ctx = build_income_statement_sheet(
+        wb,
+        income_config,
+        num_periods,
+        start_date,
+        formats,
+        assumptions_ctx,
+    )
+    balance_ctx = build_balance_sheet_sheet(
+        wb,
+        balance_config,
+        num_periods,
+        start_date,
+        formats,
+        assumptions_ctx,
+        inputs_ctx,
+        income_ctx,
+    )
+    build_cash_flow_sheet(
+        wb,
+        num_periods,
+        start_date,
+        formats,
+        assumptions_ctx,
+        inputs_ctx,
+        income_ctx,
+        balance_ctx,
+    )
 
-    section_header = wb.add_format({
-        "bold": True,
-        "bg_color": "#B4C7E7",
-        "border": 1,
-    })
+    wb.close()
 
-    subsection_header = wb.add_format({
-        "bold": True,
-        "italic": True,
-        "indent": 1,
-    })
 
-    line_item = wb.add_format({
-        "indent": 2,
-    })
+def build_assumptions_sheet(
+    wb: xlsxwriter.Workbook,
+    config: dict,
+    formats: WorkbookFormats,
+) -> AssumptionsContext:
+    sheet = "Assumptions"
+    ws = wb.add_worksheet(sheet)
+    row = 0
 
-    line_item_bold = wb.add_format({
-        "bold": True,
-        "indent": 2,
-    })
-
-    currency_fmt = wb.add_format({"num_format": "$#,##0"})
-    percent_fmt = wb.add_format({"num_format": "0.00%"})
-    date_month_fmt = wb.add_format({"num_format": "mmm-yy", "align": "center"})
-
-    # Assumptions sheet (keeping vertical for inputs)
-    assumptions_ws = wb.add_worksheet("Assumptions")
-    bold = wb.add_format({"bold": True})
-    date_fmt = wb.add_format({"num_format": "mm/dd/yyyy"})
-
-    assumptions_ws.write(0, 0, "Model Settings", bold)
-    assumptions_ws.write(1, 0, "Start Date")
-    assumptions_ws.write_datetime(1, 1, start_date, date_fmt)
-    assumptions_ws.write(2, 0, "Number of Periods")
-    assumptions_ws.write(2, 1, num_periods)
+    ws.write(row, 0, "Model Settings", formats.bold)
+    row += 1
+    ws.write(row, 0, "Start Date")
+    ws.write_datetime(
+        row,
+        1,
+        datetime.strptime(config["model_settings"]["start_date"], "%Y-%m-%d").date(),
+        formats.date,
+    )
+    row += 1
+    ws.write(row, 0, "Number of Periods")
+    ws.write(row, 1, int(config["model_settings"]["num_periods"]))
+    row += 2
 
     # Revenue streams
-    assumptions_ws.write(4, 0, "Revenue Streams", bold)
-    rev_refs = {}
-    for idx, stream_key in enumerate(["stream_1", "stream_2", "stream_3", "stream_4"], start=5):
-        stream = income_config["revenue_streams"][stream_key]
-        assumptions_ws.write(idx, 0, f"{stream['name']} Initial")
-        assumptions_ws.write(idx, 1, float(stream["initial_value"]))
-        assumptions_ws.write(idx, 2, "Growth Factor")
-        assumptions_ws.write(idx, 3, float(stream["growth_rate"]))
-        rev_refs[f"{stream_key}_initial"] = coord_from_indices(idx, 1)
-        rev_refs[f"{stream_key}_growth"] = coord_from_indices(idx, 3)
+    ws.write(row, 0, "Revenue Streams", formats.bold)
+    row += 1
+    revenue_refs: Dict[str, RevenueStreamRefs] = {}
+    revenue_streams = config["income_statement"]["revenue_streams"]
+    for key in sorted(revenue_streams.keys()):
+        stream = revenue_streams[key]
+        ws.write(row, 0, f"{stream['name']} Initial")
+        ws.write_number(row, 1, float(stream["initial_value"]))
+        ws.write(row, 2, "Growth Factor")
+        ws.write_number(row, 3, float(stream["growth_rate"]))
+        revenue_refs[key] = RevenueStreamRefs(
+            initial=sheet_ref(sheet, coord_from_indices(row, 1)),
+            growth=sheet_ref(sheet, coord_from_indices(row, 3)),
+        )
+        row += 1
 
-    assumptions_ws.write(9, 0, "Sales Returns Initial")
-    assumptions_ws.write(9, 1, float(income_config["sales_returns"]["initial_value"]))
-    sales_returns_init_coord = coord_from_indices(9, 1)
-    assumptions_ws.write(9, 2, "Sales Returns Rate")
-    assumptions_ws.write(9, 3, float(income_config["sales_returns"]["rate"]))
-    sales_returns_rate_coord = coord_from_indices(9, 3)
+    ws.write(row, 0, "Sales Returns Initial")
+    ws.write_number(row, 1, float(config["income_statement"]["sales_returns"]["initial_value"]))
+    sales_returns_initial = sheet_ref(sheet, coord_from_indices(row, 1))
+    ws.write(row, 2, "Sales Returns Rate")
+    ws.write_number(row, 3, float(config["income_statement"]["sales_returns"]["rate"]))
+    sales_returns_rate = sheet_ref(sheet, coord_from_indices(row, 3))
+    row += 2
 
-    assumptions_ws.write(11, 0, "Variable Costs Initial")
-    assumptions_ws.write(11, 1, float(income_config["cogs"]["variable_costs"]["initial_value"]))
-    var_cost_init_coord = coord_from_indices(11, 1)
-    assumptions_ws.write(11, 2, "Variable Cost Growth")
-    assumptions_ws.write(11, 3, float(income_config["cogs"]["variable_costs"]["growth_rate"]))
-    var_cost_growth_coord = coord_from_indices(11, 3)
+    ws.write(row, 0, "Cost of Goods Sold", formats.bold)
+    row += 1
+    cogs = config["income_statement"]["cogs"]
+    ws.write(row, 0, "Variable Costs Initial")
+    ws.write_number(row, 1, float(cogs["variable_costs"]["initial_value"]))
+    variable_cost_initial = sheet_ref(sheet, coord_from_indices(row, 1))
+    ws.write(row, 2, "Variable Cost Growth")
+    ws.write_number(row, 3, float(cogs["variable_costs"]["growth_rate"]))
+    variable_cost_growth = sheet_ref(sheet, coord_from_indices(row, 3))
+    row += 1
 
-    assumptions_ws.write(12, 0, "Fixed Costs Initial")
-    assumptions_ws.write(12, 1, float(income_config["cogs"]["fixed_costs"]["initial_value"]))
-    fixed_cost_init_coord = coord_from_indices(12, 1)
-    assumptions_ws.write(12, 2, "Fixed Cost Period 5+")
-    fixed_changes = income_config["cogs"]["fixed_costs"].get("changes", {})
-    fixed_cost_after = float(fixed_changes.get("period_5", income_config["cogs"]["fixed_costs"]["initial_value"]))
-    assumptions_ws.write(12, 3, fixed_cost_after)
-    fixed_cost_after_coord = coord_from_indices(12, 3)
+    ws.write(row, 0, "Fixed Costs Initial")
+    ws.write_number(row, 1, float(cogs["fixed_costs"]["initial_value"]))
+    fixed_cost_initial = sheet_ref(sheet, coord_from_indices(row, 1))
+    ws.write(row, 2, "Fixed Cost Period 5+")
+    fixed_after_value = float(
+        cogs["fixed_costs"].get("changes", {}).get("period_5", cogs["fixed_costs"]["initial_value"])
+    )
+    ws.write_number(row, 3, fixed_after_value)
+    fixed_cost_after = sheet_ref(sheet, coord_from_indices(row, 3))
+    row += 2
 
-    assumptions_ws.write(14, 0, "Operating Expenses", bold)
-    assumptions_ws.write(15, 0, "G&A Expenses")
-    assumptions_ws.write(15, 1, float(income_config["operating_expenses"]["ga_expenses"]))
-    ga_expenses_coord = coord_from_indices(15, 1)
+    ws.write(row, 0, "Operating Expenses", formats.bold)
+    row += 1
+    ws.write(row, 0, "G&A Expenses")
+    ws.write_number(row, 1, float(config["income_statement"]["operating_expenses"]["ga_expenses"]))
+    ga_expenses = sheet_ref(sheet, coord_from_indices(row, 1))
+    row += 1
 
-    salary_refs_start_row = 16
-    salaries = income_config["operating_expenses"]["salaries"]
-    for offset, key in enumerate(["total_salaries", "benefits", "payroll_taxes", "processing_fees", "bonuses", "commissions"]):
-        row = salary_refs_start_row + offset
-        label = key.replace("_", " ").title()
-        assumptions_ws.write(row, 0, label)
-        assumptions_ws.write(row, 1, float(salaries[key]))
+    salary_refs: Dict[str, str] = {}
+    salaries = config["income_statement"]["operating_expenses"]["salaries"]
+    for key, value in salaries.items():
+        ws.write(row, 0, key.replace("_", " ").title())
+        ws.write_number(row, 1, float(value))
+        salary_refs[key] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
 
-    salary_start_coord = coord_from_indices(salary_refs_start_row, 1)
-    salary_end_coord = coord_from_indices(salary_refs_start_row + len(salaries) - 1, 1)
-    assumptions_title = "Assumptions"
-    salary_range = f"{sheet_ref(assumptions_title, make_absolute(salary_start_coord))}:{sheet_ref(assumptions_title, make_absolute(salary_end_coord))}"
-
-    assumptions_ws.write(23, 0, "Other Income / Expenses", bold)
-    other_income = income_config["other_income_expenses"]
-    other_labels = [
+    row += 1
+    ws.write(row, 0, "Other Income / Expenses", formats.bold)
+    row += 1
+    other_income_expense_config = config["income_statement"]["other_income_expenses"]
+    other_income_refs: Dict[str, str] = {}
+    for label, key in (
         ("Interest Income", "interest_income"),
         ("Other Income", "other_income"),
         ("Interest Expense", "interest_expense"),
         ("Bad Debt", "bad_debt"),
-    ]
-    other_refs = {}
-    for idx, (label, key) in enumerate(other_labels, start=24):
-        assumptions_ws.write(idx, 0, label)
-        assumptions_ws.write(idx, 1, float(other_income[key]))
-        other_refs[key] = coord_from_indices(idx, 1)
+    ):
+        ws.write(row, 0, label)
+        ws.write_number(row, 1, float(other_income_expense_config[key]))
+        other_income_refs[key] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
 
-    assumptions_ws.write(29, 0, "Depreciation & Amortization", bold)
-    da_config = income_config["depreciation_amortization"]
-    assumptions_ws.write(30, 0, "Depreciation")
-    assumptions_ws.write(30, 1, float(da_config["depreciation"]))
-    depreciation_coord = coord_from_indices(30, 1)
-    assumptions_ws.write(31, 0, "Amortization")
-    assumptions_ws.write(31, 1, float(da_config["amortization"]))
-    amortization_coord = coord_from_indices(31, 1)
+    row += 1
+    ws.write(row, 0, "Depreciation & Amortization", formats.bold)
+    row += 1
+    da_config = config["income_statement"]["depreciation_amortization"]
+    ws.write(row, 0, "Depreciation")
+    ws.write_number(row, 1, float(da_config["depreciation"]))
+    depreciation_ref = sheet_ref(sheet, coord_from_indices(row, 1))
+    row += 1
+    ws.write(row, 0, "Amortization")
+    ws.write_number(row, 1, float(da_config["amortization"]))
+    amortization_ref = sheet_ref(sheet, coord_from_indices(row, 1))
+    row += 2
 
-    assumptions_ws.write(33, 0, "Taxes", bold)
-    assumptions_ws.write(34, 0, "Income Taxes")
-    assumptions_ws.write(34, 1, float(income_config["taxes"]["income_taxes"]))
-    income_tax_coord = coord_from_indices(34, 1)
+    ws.write(row, 0, "Taxes", formats.bold)
+    row += 1
+    ws.write(row, 0, "Income Taxes")
+    ws.write_number(row, 1, float(config["income_statement"]["taxes"]["income_taxes"]))
+    income_tax_ref = sheet_ref(sheet, coord_from_indices(row, 1))
+    row += 2
 
-    assumptions_ws.write(36, 0, "Beginning Balances", bold)
-    beginning = balance_config["beginning_balances"]
-    beginning_labels = [
+    ws.write(row, 0, "Beginning Balances", formats.bold)
+    row += 1
+    beginning_refs: Dict[str, str] = {}
+    for label, key in (
         ("Cash", "cash"),
         ("Inventory", "inventory"),
         ("Accounts Receivable", "accounts_receivable"),
@@ -201,25 +404,46 @@ def create_workbook(config: dict, output_path: Path) -> None:
         ("Accrued Expenses", "accrued_expenses"),
         ("Accrued Taxes", "accrued_taxes"),
         ("Other Current Liabilities", "other_current_liabilities"),
+    ):
+        ws.write(row, 0, label)
+        ws.write_number(row, 1, float(config["balance_sheet"]["beginning_balances"][key]))
+        beginning_refs[key] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
+
+    oca_keys = [
+        "other_receivable",
+        "prepaid_expenses",
+        "prepaid_insurance",
+        "unbilled_revenue",
+        "other_current_assets",
     ]
-    beginning_refs = {}
-    for idx, (label, key) in enumerate(beginning_labels, start=37):
-        assumptions_ws.write(idx, 0, label)
-        assumptions_ws.write(idx, 1, float(beginning[key]))
-        beginning_refs[key] = coord_from_indices(idx, 1)
 
-    assumptions_ws.write(50, 0, "Fixed Assets", bold)
-    fixed_assets = balance_config["fixed_assets"]
-    assumptions_ws.write(51, 0, "PPE Gross")
-    assumptions_ws.write(51, 1, float(fixed_assets["ppe_gross"]))
-    ppe_gross_coord = coord_from_indices(51, 1)
-    assumptions_ws.write(52, 0, "Intangibles Gross")
-    assumptions_ws.write(52, 1, float(fixed_assets["intangibles_gross"]))
-    intangibles_gross_coord = coord_from_indices(52, 1)
+    row += 1
+    ws.write(row, 0, "Fixed Assets", formats.bold)
+    row += 1
+    fixed_assets_config = config["balance_sheet"]["fixed_assets"]
+    fixed_asset_refs: Dict[str, str] = {}
+    for label, key in (
+        ("Property, Plant & Equipment", "ppe_gross"),
+        ("Intangibles", "intangibles_gross"),
+    ):
+        ws.write(row, 0, label)
+        ws.write_number(row, 1, float(fixed_assets_config[key]))
+        fixed_asset_refs[label] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
 
-    assumptions_ws.write(54, 0, "Liabilities Constants", bold)
-    liabilities = balance_config["liabilities_constants"]
-    liability_labels = [
+    additional_fixed_asset_refs: Dict[str, str] = {}
+    for label, value in fixed_assets_config.get("additional_assets", {}).items():
+        ws.write(row, 0, label)
+        ws.write_number(row, 1, float(value))
+        additional_fixed_asset_refs[label] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
+
+    row += 1
+    ws.write(row, 0, "Liabilities Constants", formats.bold)
+    row += 1
+    liabilities_refs: Dict[str, str] = {}
+    for label, key in (
         ("Credit Cards", "credit_cards"),
         ("Notes Payable", "notes_payable"),
         ("Deferred Income", "deferred_income"),
@@ -227,35 +451,66 @@ def create_workbook(config: dict, output_path: Path) -> None:
         ("Long Term Debt", "long_term_debt"),
         ("Deferred Tax Liabilities", "deferred_tax_liabilities"),
         ("Other Liabilities", "other_liabilities"),
-    ]
-    liability_refs = {}
-    for idx, (label, key) in enumerate(liability_labels, start=55):
-        assumptions_ws.write(idx, 0, label)
-        assumptions_ws.write(idx, 1, float(liabilities[key]))
-        liability_refs[key] = coord_from_indices(idx, 1)
+    ):
+        ws.write(row, 0, label)
+        ws.write_number(row, 1, float(config["balance_sheet"]["liabilities_constants"][key]))
+        liabilities_refs[key] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
 
-    assumptions_ws.write(63, 0, "Equity", bold)
-    equity = balance_config["equity"]
-    equity_labels = [
+    row += 1
+    ws.write(row, 0, "Equity", formats.bold)
+    row += 1
+    equity_refs: Dict[str, str] = {}
+    for label, key in (
         ("Paid In Capital", "paid_in_capital"),
         ("Common Stock", "common_stock"),
         ("Preferred Stock", "preferred_stock"),
         ("Capital Round 1", "capital_round_1"),
         ("Capital Round 2", "capital_round_2"),
         ("Capital Round 3", "capital_round_3"),
-    ]
-    equity_refs = {}
-    for idx, (label, key) in enumerate(equity_labels, start=64):
-        assumptions_ws.write(idx, 0, label)
-        assumptions_ws.write(idx, 1, float(equity[key]))
-        equity_refs[key] = coord_from_indices(idx, 1)
+    ):
+        ws.write(row, 0, label)
+        ws.write_number(row, 1, float(config["balance_sheet"]["equity"][key]))
+        equity_refs[key] = sheet_ref(sheet, coord_from_indices(row, 1))
+        row += 1
 
-    assumptions_ws.set_column(0, 0, 30)
-    assumptions_ws.set_column(1, 3, 16)
+    ws.set_column(0, 0, 32)
+    ws.set_column(1, 3, 18)
 
-    # Inputs sheet (keeping vertical)
-    inputs_ws = wb.add_worksheet("Inputs")
-    inputs_headers = [
+    return AssumptionsContext(
+        sheet=sheet,
+        revenue_streams=revenue_refs,
+        sales_returns_initial=sales_returns_initial,
+        sales_returns_rate=sales_returns_rate,
+        variable_cost_initial=variable_cost_initial,
+        variable_cost_growth=variable_cost_growth,
+        fixed_cost_initial=fixed_cost_initial,
+        fixed_cost_after=fixed_cost_after,
+        ga_expenses=ga_expenses,
+        salary_lines=salary_refs,
+        other_income_expense=other_income_refs,
+        depreciation=depreciation_ref,
+        amortization=amortization_ref,
+        income_tax=income_tax_ref,
+        beginning_balances=beginning_refs,
+        oca_keys=oca_keys,
+        fixed_assets=fixed_asset_refs,
+        additional_fixed_assets=additional_fixed_asset_refs,
+        liabilities=liabilities_refs,
+        equity=equity_refs,
+    )
+
+
+def build_inputs_sheet(
+    wb: xlsxwriter.Workbook,
+    balance_config: dict,
+    num_periods: int,
+    formats: WorkbookFormats,
+) -> InputsContext:
+    sheet = "Inputs"
+    ws = wb.add_worksheet(sheet)
+
+    headers = [
         "Period",
         "Inventory",
         "Accounts Receivable",
@@ -266,822 +521,800 @@ def create_workbook(config: dict, output_path: Path) -> None:
         "Prepaid Expenses",
         "Prepaid Insurance",
         "Unbilled Revenue",
-        "Other Current Assets Component",
+        "Other Current Assets",
     ]
-    for col, header in enumerate(inputs_headers):
-        inputs_ws.write(0, col, header, header_blue)
+
+    for col, header in enumerate(headers):
+        ws.write(0, col, header, formats.header_blue)
 
     period_values = balance_config["period_values"]
     oca_components = period_values["other_current_assets_components"]
-    for idx in range(num_periods):
-        row = idx + 1
-        inputs_ws.write(row, 0, idx)
-        inputs_ws.write(row, 1, float(period_values["inventory"][idx]))
-        inputs_ws.write(row, 2, float(period_values["accounts_receivable"][idx]))
-        inputs_ws.write(row, 3, float(period_values["accounts_payable"][idx]))
-        inputs_ws.write(row, 4, float(period_values["accrued_expenses"][idx]))
-        inputs_ws.write(row, 5, float(period_values["other_current_liabilities"][idx]))
-        inputs_ws.write(row, 6, float(oca_components["other_receivable"][idx]))
-        inputs_ws.write(row, 7, float(oca_components["prepaid_expenses"][idx]))
-        inputs_ws.write(row, 8, float(oca_components["prepaid_insurance"][idx]))
-        inputs_ws.write(row, 9, float(oca_components["unbilled_revenue"][idx]))
-        inputs_ws.write(row, 10, float(oca_components["other_current_assets"][idx]))
-
-    inputs_ws.set_column(0, 10, 20)
-    inputs_title = "Inputs"
-
-    # Income Statement sheet (HORIZONTAL/PIVOTED)
-    income_ws = wb.add_worksheet("Income Statement")
-
-    # Title row
-    income_ws.merge_range(0, 0, 0, num_periods, "Income Statement", header_blue)
-
-    # Header row with dates
-    for idx in range(num_periods):
-        period_date = start_date + relativedelta(months=idx)
-        income_ws.write_datetime(1, idx + 1, period_date, date_month_fmt)
-
-    # Define the structure with row indices
-    row_idx = 2
-
-    # Income section
-    income_ws.write(row_idx, 0, "Income", section_header)
-    for col in range(1, num_periods + 1):
-        income_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    # Revenue streams
-    stream_names = [income_config["revenue_streams"][f"stream_{i}"]["name"] for i in range(1, 5)]
-    revenue_start_row = row_idx
-
-    for stream_idx, stream_key in enumerate(["stream_1", "stream_2", "stream_3", "stream_4"]):
-        income_ws.write(row_idx, 0, stream_names[stream_idx], line_item)
-        initial_ref = sheet_ref(assumptions_title, make_absolute(rev_refs[f"{stream_key}_initial"]))
-        growth_ref = sheet_ref(assumptions_title, make_absolute(rev_refs[f"{stream_key}_growth"]))
-
-        for period in range(num_periods):
-            col = period + 1
-            if period == 0:
-                income_ws.write_formula(row_idx, col, f"={initial_ref}", currency_fmt)
-            else:
-                prev_col = col_letter(col - 1)
-                income_ws.write_formula(row_idx, col, f"={prev_col}{row_idx + 1}*{growth_ref}", currency_fmt)
-        row_idx += 1
-
-    # Sales returns
-    sales_returns_row = row_idx
-    income_ws.write(row_idx, 0, "(-) Sales Returns", line_item)
-    sales_returns_init_ref = sheet_ref(assumptions_title, make_absolute(sales_returns_init_coord))
-    sales_returns_rate_ref = sheet_ref(assumptions_title, make_absolute(sales_returns_rate_coord))
 
     for period in range(num_periods):
-        col = period + 1
+        row = period + 1
+        ws.write_number(row, 0, period)
+        ws.write_number(row, 1, float(period_values["inventory"][period]))
+        ws.write_number(row, 2, float(period_values["accounts_receivable"][period]))
+        ws.write_number(row, 3, float(period_values["accounts_payable"][period]))
+        ws.write_number(row, 4, float(period_values["accrued_expenses"][period]))
+        ws.write_number(row, 5, float(period_values["other_current_liabilities"][period]))
+        ws.write_number(row, 6, float(oca_components["other_receivable"][period]))
+        ws.write_number(row, 7, float(oca_components["prepaid_expenses"][period]))
+        ws.write_number(row, 8, float(oca_components["prepaid_insurance"][period]))
+        ws.write_number(row, 9, float(oca_components["unbilled_revenue"][period]))
+        ws.write_number(row, 10, float(oca_components["other_current_assets"][period]))
+
+    ws.set_column(0, len(headers), 20)
+    return InputsContext(sheet=sheet, header_to_column={header: idx for idx, header in enumerate(headers)})
+
+
+def build_income_statement_sheet(
+    wb: xlsxwriter.Workbook,
+    income_config: dict,
+    num_periods: int,
+    start_date,
+    formats: WorkbookFormats,
+    assumptions: AssumptionsContext,
+) -> IncomeStatementContext:
+    sheet = "Income Statement"
+    ws = wb.add_worksheet(sheet)
+
+    ws.merge_range(0, 0, 0, FIRST_DATA_COLUMN + num_periods - 1, "Income Statement", formats.header_blue)
+    for period in range(num_periods):
+        period_date = start_date + relativedelta(months=period)
+        ws.write_datetime(1, FIRST_DATA_COLUMN + period, period_date, formats.date_month)
+
+    row = 2
+
+    def write_section(title: str) -> None:
+        nonlocal row
+        ws.write(row, 0, title, formats.section_header)
+        for col in range(1, FIRST_DATA_COLUMN + num_periods):
+            ws.write(row, col, "", formats.section_header)
+        row += 1
+
+    def write_subsection(title: str) -> None:
+        nonlocal row
+        ws.write(row, 0, title, formats.subsection_header)
+        for col in range(1, FIRST_DATA_COLUMN + num_periods):
+            ws.write(row, col, "", formats.subsection_header)
+        row += 1
+
+    write_section("Income")
+
+    revenue_rows: List[int] = []
+    revenue_streams = income_config["revenue_streams"]
+    for key in sorted(revenue_streams.keys()):
+        stream = revenue_streams[key]
+        ws.write(row, 0, stream["name"], formats.line_item)
+        refs = assumptions.revenue_streams[key]
+        write_growth_series(ws, row, num_periods, refs.initial, refs.growth, formats.currency)
+        revenue_rows.append(row)
+        row += 1
+
+    ws.write(row, 0, "(-) Sales Returns", formats.line_item)
+    sales_returns_row = row
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
         if period == 0:
-            income_ws.write_formula(row_idx, col, f"={sales_returns_init_ref}", currency_fmt)
+            ws.write_formula(row, col_idx, f"={assumptions.sales_returns_initial}", formats.currency)
         else:
-            col_let = col_letter(col)
-            revenue_sum = "+".join([f"{col_let}{revenue_start_row + i + 1}" for i in range(4)])
-            income_ws.write_formula(row_idx, col, f"=-({revenue_sum})*{sales_returns_rate_ref}", currency_fmt)
-    row_idx += 1
+            col_letter_current = col_letter(col_idx)
+            first_revenue_row = revenue_rows[0] + 1
+            last_revenue_row = revenue_rows[-1] + 1
+            revenue_range = f"{col_letter_current}{first_revenue_row}:{col_letter_current}{last_revenue_row}"
+            ws.write_formula(
+                row,
+                col_idx,
+                f"=-SUM({revenue_range})*{assumptions.sales_returns_rate}",
+                formats.currency,
+            )
+    row += 1
 
-    # Net revenue
-    net_revenue_row = row_idx
-    income_ws.write(row_idx, 0, "Net Revenue", line_item_bold)
+    ws.write(row, 0, "Net Revenue", formats.line_item_bold)
+    net_revenue_row = row
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"=SUM({col_let}{revenue_start_row + 1}:{col_let}{sales_returns_row + 1})", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{revenue_rows[0] + 1}:{col_let}{sales_returns_row + 1})",
+            formats.currency,
+        )
+    row += 1
 
-    # COGS section
-    row_idx += 1
-    income_ws.write(row_idx, 0, "Cost of Goods Sold", section_header)
-    for col in range(1, num_periods + 1):
-        income_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
+    write_section("Cost of Goods Sold")
 
-    # Variable costs
-    var_costs_row = row_idx
-    income_ws.write(row_idx, 0, "Variable Costs", line_item)
-    var_init_ref = sheet_ref(assumptions_title, make_absolute(var_cost_init_coord))
-    var_growth_ref = sheet_ref(assumptions_title, make_absolute(var_cost_growth_coord))
+    ws.write(row, 0, "Variable Costs", formats.line_item)
+    variable_costs_row = row
+    write_growth_series(ws, row, num_periods, assumptions.variable_cost_initial, assumptions.variable_cost_growth, formats.currency)
+    row += 1
 
+    ws.write(row, 0, "Fixed Costs", formats.line_item)
+    fixed_costs_row = row
     for period in range(num_periods):
-        col = period + 1
-        if period == 0:
-            income_ws.write_formula(row_idx, col, f"={var_init_ref}", currency_fmt)
-        else:
-            prev_col = col_letter(col - 1)
-            income_ws.write_formula(row_idx, col, f"={prev_col}{row_idx + 1}*{var_growth_ref}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        ref = assumptions.fixed_cost_initial if period < 4 else assumptions.fixed_cost_after
+        ws.write_formula(row, col_idx, f"={ref}", formats.currency)
+    row += 1
 
-    # Fixed costs
-    fixed_costs_row = row_idx
-    income_ws.write(row_idx, 0, "Fixed Costs", line_item)
-    fixed_init_ref = sheet_ref(assumptions_title, make_absolute(fixed_cost_init_coord))
-    fixed_after_ref = sheet_ref(assumptions_title, make_absolute(fixed_cost_after_coord))
-
+    ws.write(row, 0, "Total Cost of Goods Sold", formats.line_item_bold)
+    total_cogs_row = row
     for period in range(num_periods):
-        col = period + 1
-        income_ws.write_formula(row_idx, col, f"=IF({period}=0,{fixed_init_ref},IF({period}>=5,{fixed_after_ref},{fixed_init_ref}))", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{variable_costs_row + 1}+{col_let}{fixed_costs_row + 1}",
+            formats.currency,
+        )
+    row += 1
 
-    # Total COGS
-    total_cogs_row = row_idx
-    income_ws.write(row_idx, 0, "Total Cost of Goods Sold", line_item_bold)
+    ws.write(row, 0, "Gross Profit", formats.line_item_bold)
+    gross_profit_row = row
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"={col_let}{var_costs_row + 1}+{col_let}{fixed_costs_row + 1}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{net_revenue_row + 1}-{col_let}{total_cogs_row + 1}",
+            formats.currency,
+        )
+    row += 1
 
-    # Gross profit
-    row_idx += 1
-    gross_profit_row = row_idx
-    income_ws.write(row_idx, 0, "Gross Profit", line_item_bold)
+    ws.write(row, 0, "Gross Margin %", formats.line_item)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"={col_let}{net_revenue_row + 1}-{col_let}{total_cogs_row + 1}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=IF({col_let}{net_revenue_row + 1}=0,0,{col_let}{gross_profit_row + 1}/{col_let}{net_revenue_row + 1})",
+            formats.percent,
+        )
+    row += 1
 
-    # Gross margin
-    income_ws.write(row_idx, 0, "Gross Margin %", line_item)
+    write_section("Operating Expenses")
+
+    ws.write(row, 0, "General & Administrative Expense", formats.line_item)
+    g_and_a_row = row
+    write_constant_series(ws, row, num_periods, assumptions.ga_expenses, formats.currency)
+    row += 1
+
+    write_subsection("Salaries & Commissions")
+    salary_row_start = row
+    salary_keys = list(assumptions.salary_lines.keys())
+    for key in salary_keys:
+        ws.write(row, 0, key.replace("_", " ").title(), formats.line_item)
+        write_constant_series(ws, row, num_periods, assumptions.salary_lines[key], formats.currency)
+        row += 1
+    salary_row_end = row - 1
+
+    ws.write(row, 0, "Total Operating Expenses", formats.line_item_bold)
+    total_operating_expenses_row = row
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"=IF({col_let}{net_revenue_row + 1}=0,0,{col_let}{gross_profit_row + 1}/{col_let}{net_revenue_row + 1})", percent_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{g_and_a_row + 1}:{col_let}{salary_row_end + 1})",
+            formats.currency,
+        )
+    row += 2
 
-    # Expenses section
-    row_idx += 1
-    income_ws.write(row_idx, 0, "Expenses", section_header)
-    for col in range(1, num_periods + 1):
-        income_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    # G&A
-    income_ws.write(row_idx, 0, "General & Administrative Expense", subsection_header)
-    for col in range(1, num_periods + 1):
-        income_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    ga_line_items = [
-        "Insurance", "Rent or Lease", "Property Taxes", "Repairs and Maintenance",
-        "Furniture & Fixtures", "Utilities", "Internet & Communications",
-        "Infrastructure Services", "Software", "Bank Service Charges",
-        "Business Licenses and Permits", "Conferences, Dues, and Subscriptions",
-        "Supplies", "Gifts", "Printing , Postage and Delivery", "Miscellaneous"
-    ]
-    ga_expenses_start_row = row_idx
-
-    ga_ref = sheet_ref(assumptions_title, make_absolute(ga_expenses_coord))
-    for item in ga_line_items:
-        income_ws.write(row_idx, 0, item, line_item)
-        for period in range(num_periods):
-            col = period + 1
-            income_ws.write_formula(row_idx, col, f"={ga_ref}/16", currency_fmt)
-        row_idx += 1
-
-    # Salaries section
-    income_ws.write(row_idx, 0, "Salaries & Commissions", subsection_header)
-    for col in range(1, num_periods + 1):
-        income_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    salary_labels = ["Total Salaries", "Benefits", "Payroll Taxes", "Processing Fees", "Bonuses", "Commissions"]
-    for label in salary_labels:
-        income_ws.write(row_idx, 0, label, line_item)
-        for period in range(num_periods):
-            col = period + 1
-            income_ws.write_formula(row_idx, col, f"=SUM({salary_range})/6", currency_fmt)
-        row_idx += 1
-
-    # Total expenses
-    total_expenses_row = row_idx
-    income_ws.write(row_idx, 0, "Total Operating Expenses", line_item_bold)
+    ws.write(row, 0, "EBITDA", formats.line_item_bold)
+    ebitda_row = row
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"=SUM({col_let}{ga_expenses_start_row + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{gross_profit_row + 1}-{col_let}{total_operating_expenses_row + 1}",
+            formats.currency,
+        )
+    row += 2
 
-    # EBITDA
-    row_idx += 1
-    ebitda_row = row_idx
-    income_ws.write(row_idx, 0, "EBITDA", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"={col_let}{gross_profit_row + 1}-{col_let}{total_expenses_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Other income/expenses
-    row_idx += 1
-    income_ws.write(row_idx, 0, "Other Income / (Expenses)", section_header)
-    for col in range(1, num_periods + 1):
-        income_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
+    write_section("Other Income / (Expenses)")
     other_items = [
-        ("Interest Income", other_refs['interest_income']),
-        ("Other Income", other_refs['other_income']),
-        ("Interest Expense", other_refs['interest_expense']),
-        ("Bad Debt", other_refs['bad_debt']),
-        ("Depreciation", depreciation_coord),
-        ("Amortization", amortization_coord),
+        ("Interest Income", assumptions.other_income_expense["interest_income"], 1),
+        ("Other Income", assumptions.other_income_expense["other_income"], 1),
+        ("Interest Expense", assumptions.other_income_expense["interest_expense"], -1),
+        ("Bad Debt", assumptions.other_income_expense["bad_debt"], -1),
+        ("Depreciation", assumptions.depreciation, -1),
+        ("Amortization", assumptions.amortization, -1),
     ]
-    other_start_row = row_idx
+    other_start_row = row
+    depreciation_row = amortization_row = None
+    for label, ref, sign in other_items:
+        ws.write(row, 0, label, formats.line_item)
+        write_constant_series(ws, row, num_periods, ref, formats.currency, sign=sign)
+        if label == "Depreciation":
+            depreciation_row = row
+        if label == "Amortization":
+            amortization_row = row
+        row += 1
+    other_end_row = row - 1
 
-    for label, ref_coord in other_items:
-        income_ws.write(row_idx, 0, label, line_item)
-        ref = sheet_ref(assumptions_title, make_absolute(ref_coord))
-        for period in range(num_periods):
-            col = period + 1
-            income_ws.write_formula(row_idx, col, f"={ref}", currency_fmt)
-        row_idx += 1
-
-    # Total other
-    total_other_row = row_idx
-    income_ws.write(row_idx, 0, "Total Other Income / (Expenses)", line_item_bold)
+    ws.write(row, 0, "Total Other Income / (Expenses)", formats.line_item_bold)
+    total_other_row = row
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"=SUM({col_let}{other_start_row + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{other_start_row + 1}:{col_let}{other_end_row + 1})",
+            formats.currency,
+        )
+    row += 1
 
-    # Net income before taxes
-    row_idx += 1
-    nibt_row = row_idx
-    income_ws.write(row_idx, 0, "Net Income Before Taxes", line_item_bold)
+    ws.write(row, 0, "Net Income Before Taxes", formats.line_item_bold)
+    net_income_before_taxes_row = row
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"={col_let}{ebitda_row + 1}-{col_let}{total_other_row + 1}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{ebitda_row + 1}+{col_let}{total_other_row + 1}",
+            formats.currency,
+        )
+    row += 1
 
-    # Income taxes
-    income_tax_row = row_idx
-    income_ws.write(row_idx, 0, "Income Taxes", line_item)
-    income_tax_ref = sheet_ref(assumptions_title, make_absolute(income_tax_coord))
+    ws.write(row, 0, "Income Taxes", formats.line_item)
+    income_taxes_row = row
+    write_constant_series(ws, row, num_periods, assumptions.income_tax, formats.currency, sign=-1)
+    row += 1
+
+    ws.write(row, 0, "Net Income", formats.line_item_bold)
+    net_income_row = row
     for period in range(num_periods):
-        col = period + 1
-        income_ws.write_formula(row_idx, col, f"={income_tax_ref}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{net_income_before_taxes_row + 1}+{col_let}{income_taxes_row + 1}",
+            formats.currency,
+        )
+    row += 1
 
-    # Net income
-    net_income_row = row_idx
-    income_ws.write(row_idx, 0, "Net Income", line_item_bold)
+    ws.set_column(0, 0, 40)
+    ws.set_column(1, FIRST_DATA_COLUMN + num_periods, 18)
+    ws.freeze_panes(2, 1)
+
+    return IncomeStatementContext(
+        sheet=sheet,
+        net_income_row=net_income_row,
+        depreciation_row=depreciation_row if depreciation_row is not None else 0,
+        amortization_row=amortization_row if amortization_row is not None else 0,
+        total_other_row=total_other_row,
+    )
+
+
+def build_balance_sheet_sheet(
+    wb: xlsxwriter.Workbook,
+    balance_config: dict,
+    num_periods: int,
+    start_date,
+    formats: WorkbookFormats,
+    assumptions: AssumptionsContext,
+    inputs: InputsContext,
+    income: IncomeStatementContext,
+) -> BalanceSheetContext:
+    sheet = "Balance Sheet"
+    ws = wb.add_worksheet(sheet)
+
+    ws.merge_range(0, 0, 0, FIRST_DATA_COLUMN + num_periods - 1, "Balance Sheet", formats.header_blue)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        income_ws.write_formula(row_idx, col, f"={col_let}{nibt_row + 1}-{col_let}{income_tax_row + 1}", currency_fmt)
-    row_idx += 1
+        ws.write_datetime(1, FIRST_DATA_COLUMN + period, start_date + relativedelta(months=period), formats.date_month)
 
-    income_ws.set_column(0, 0, 35)
-    income_ws.set_column(1, num_periods, 12)
-    income_ws.freeze_panes(2, 1)
+    row = 2
 
-    # Balance Sheet (HORIZONTAL/PIVOTED)
-    balance_ws = wb.add_worksheet("Balance Sheet")
+    def write_section(title: str) -> None:
+        nonlocal row
+        ws.write(row, 0, title, formats.section_header)
+        for col in range(1, FIRST_DATA_COLUMN + num_periods):
+            ws.write(row, col, "", formats.section_header)
+        row += 1
 
-    balance_ws.merge_range(0, 0, 0, num_periods, "Balance Sheet", header_blue)
+    write_section("Current Assets")
 
-    for idx in range(num_periods):
-        period_date = start_date + relativedelta(months=idx)
-        balance_ws.write_datetime(1, idx + 1, period_date, date_month_fmt)
+    cash_row = row
+    ws.write(row, 0, "Cash & Cash Equivalents", formats.line_item)
+    for col in range(FIRST_DATA_COLUMN, FIRST_DATA_COLUMN + num_periods):
+        ws.write_blank(row, col, None)
+    row += 1
 
-    row_idx = 2
-
-    # Current assets
-    balance_ws.write(row_idx, 0, "Current Assets", section_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    # Cash
-    cash_row = row_idx
-    balance_ws.write(row_idx, 0, "Cash & Cash Equivalents", line_item)
+    accounts_receivable_row = row
+    ws.write(row, 0, "Accounts Receivable", formats.line_item)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"='Cash Flow'!{col_letter(col)}{20}", currency_fmt)  # Placeholder, will fix
-    row_idx += 1
+        coord = coord_from_indices(period + 1, inputs.header_to_column["Accounts Receivable"])
+        ws.write_formula(row, FIRST_DATA_COLUMN + period, f"={sheet_ref(inputs.sheet, coord)}", formats.currency)
+    row += 1
 
-    # AR
-    ar_row = row_idx
-    balance_ws.write(row_idx, 0, "Accounts Receivable (A/R)", line_item)
+    inventory_row = row
+    ws.write(row, 0, "Inventory", formats.line_item)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"={sheet_ref(inputs_title, f'$C${period + 2}')}", currency_fmt)
-    row_idx += 1
+        coord = coord_from_indices(period + 1, inputs.header_to_column["Inventory"])
+        ws.write_formula(row, FIRST_DATA_COLUMN + period, f"={sheet_ref(inputs.sheet, coord)}", formats.currency)
+    row += 1
 
-    # Inventory
-    inventory_row = row_idx
-    balance_ws.write(row_idx, 0, "Inventory", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"={sheet_ref(inputs_title, f'$B${period + 2}')}", currency_fmt)
-    row_idx += 1
+    ws.write(row, 0, "Other Current Assets", formats.subsection_header)
+    for col in range(1, FIRST_DATA_COLUMN + num_periods):
+        ws.write(row, col, "", formats.subsection_header)
+    row += 1
 
-    # Other current assets (detailed)
-    balance_ws.write(row_idx, 0, "Other Current Assets", subsection_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    oca_labels = ["Other Receivable", "Prepaid Expenses", "Prepaid Insurance", "Unbilled Revenue", "Other Current Assets"]
-    oca_start_row = row_idx
-    for oca_idx, label in enumerate(oca_labels):
-        balance_ws.write(row_idx, 0, label, line_item)
-        for period in range(num_periods):
-            col = period + 1
-            balance_ws.write_formula(row_idx, col, f"={sheet_ref(inputs_title, f'${col_letter(7 + oca_idx)}${period + 2}')}", currency_fmt)
-        row_idx += 1
-
-    # Total OCA
-    total_oca_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Other Current Assets", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"=SUM({col_let}{oca_start_row + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
-
-    # Total current assets
-    total_current_assets_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Current Assets", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"={col_let}{cash_row + 1}+{col_let}{ar_row + 1}+{col_let}{inventory_row + 1}+{col_let}{total_oca_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Fixed assets
-    row_idx += 1
-    balance_ws.write(row_idx, 0, "Noncurrent Assets", section_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    # PPE
-    balance_ws.write(row_idx, 0, "Depreciation & Amortization", subsection_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    # Accumulated depreciation
-    acc_depr_row = row_idx
-    balance_ws.write(row_idx, 0, "Accumulated Depreciation", line_item)
-    depr_ref = sheet_ref(assumptions_title, make_absolute(depreciation_coord))
-    for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"=-{depr_ref}*({period}+1)", currency_fmt)
-    row_idx += 1
-
-    # Accumulated amortization
-    balance_ws.write(row_idx, 0, "Accumulated Amortization", line_item)
-    amort_ref = sheet_ref(assumptions_title, make_absolute(amortization_coord))
-    for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"=-{amort_ref}*({period}+1)", currency_fmt)
-    row_idx += 1
-
-    # Other noncurrent
-    balance_ws.write(row_idx, 0, "Other Noncurrent Assets", subsection_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    fixed_asset_items = [
-        ("Patents & Goodwill", intangibles_gross_coord),
-        ("Furniture & Equipment", ppe_gross_coord),
+    oca_entries = [
+        ("Other Receivable", "Other Receivable"),
+        ("Prepaid Expenses", "Prepaid Expenses"),
+        ("Prepaid Insurance", "Prepaid Insurance"),
+        ("Unbilled Revenue", "Unbilled Revenue"),
+        ("Other Current Assets", "Other Current Assets"),
     ]
-    for label, coord in fixed_asset_items:
-        balance_ws.write(row_idx, 0, label, line_item)
-        ref = sheet_ref(assumptions_title, make_absolute(coord))
+    oca_row_start = row
+    for label, header in oca_entries:
+        ws.write(row, 0, label, formats.line_item)
+        col_idx = inputs.header_to_column[header]
         for period in range(num_periods):
-            col = period + 1
-            balance_ws.write_formula(row_idx, col, f"={ref}", currency_fmt)
-        row_idx += 1
-
-    # Add more fixed assets
-    balance_ws.write(row_idx, 0, "Computers & Software", line_item)
+            coord = coord_from_indices(period + 1, col_idx)
+            ws.write_formula(row, FIRST_DATA_COLUMN + period, f"={sheet_ref(inputs.sheet, coord)}", formats.currency)
+        row += 1
+    total_oca_row = row
+    ws.write(row, 0, "Total Other Current Assets", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, "$100000", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{oca_row_start + 1}:{col_let}{row})",
+            formats.currency,
+        )
+    row += 1
 
-    balance_ws.write(row_idx, 0, "Leasehold Improvements", line_item)
+    total_current_assets_row = row
+    ws.write(row, 0, "Total Current Assets", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, "$25000", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{cash_row + 1}+{col_let}{accounts_receivable_row + 1}+{col_let}{inventory_row + 1}+{col_let}{total_oca_row + 1}",
+            formats.currency,
+        )
+    row += 2
 
-    # Total fixed assets
-    total_fixed_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Fixed Assets", line_item_bold)
+    write_section("Noncurrent Assets")
+
+    ws.write(row, 0, "Accumulated Depreciation", formats.line_item)
+    acc_depr_row = row
+    write_running_decrement_series(ws, row, num_periods, assumptions.depreciation, formats.currency)
+    row += 1
+
+    ws.write(row, 0, "Accumulated Amortization", formats.line_item)
+    acc_amort_row = row
+    write_running_decrement_series(ws, row, num_periods, assumptions.amortization, formats.currency)
+    row += 1
+
+    for label, ref in assumptions.fixed_assets.items():
+        ws.write(row, 0, label, formats.line_item)
+        write_constant_series(ws, row, num_periods, ref, formats.currency)
+        row += 1
+
+    for label, ref in assumptions.additional_fixed_assets.items():
+        ws.write(row, 0, label, formats.line_item)
+        write_constant_series(ws, row, num_periods, ref, formats.currency)
+        row += 1
+
+    total_fixed_assets_row = row
+    ws.write(row, 0, "Total Fixed Assets", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"=SUM({col_let}{acc_depr_row + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{acc_depr_row + 1}:{col_let}{row})",
+            formats.currency,
+        )
+    row += 2
 
-    # Total assets
-    row_idx += 1
-    total_assets_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Assets", line_item_bold)
+    total_assets_row = row
+    ws.write(row, 0, "Total Assets", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"={col_let}{total_current_assets_row + 1}+{col_let}{total_fixed_row + 1}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{total_current_assets_row + 1}+{col_let}{total_fixed_assets_row + 1}",
+            formats.currency,
+        )
+    row += 2
 
-    # Liabilities
-    row_idx += 1
-    balance_ws.write(row_idx, 0, "Current Liabilities", section_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
+    write_section("Current Liabilities")
 
-    current_liab_start = row_idx
-
-    # AP
-    ap_row = row_idx
-    balance_ws.write(row_idx, 0, "Accounts Payable", line_item)
+    accounts_payable_row = row
+    ws.write(row, 0, "Accounts Payable", formats.line_item)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"={sheet_ref(inputs_title, f'$D${period + 2}')}", currency_fmt)
-    row_idx += 1
+        coord = coord_from_indices(period + 1, inputs.header_to_column["Accounts Payable"])
+        ws.write_formula(row, FIRST_DATA_COLUMN + period, f"={sheet_ref(inputs.sheet, coord)}", formats.currency)
+    row += 1
 
-    # Credit cards, notes, etc.
-    liability_line_items = [
-        ("Credit Cards", liability_refs['credit_cards']),
-        ("Notes Payable", liability_refs['notes_payable']),
-        ("Deferred Income", liability_refs['deferred_income']),
-    ]
+    for label, key in (
+        ("Credit Cards", "credit_cards"),
+        ("Notes Payable", "notes_payable"),
+        ("Deferred Income", "deferred_income"),
+    ):
+        ws.write(row, 0, label, formats.line_item)
+        write_constant_series(ws, row, num_periods, assumptions.liabilities[key], formats.currency)
+        row += 1
 
-    for label, coord in liability_line_items:
-        balance_ws.write(row_idx, 0, label, line_item)
-        ref = sheet_ref(assumptions_title, make_absolute(coord))
+    accrued_expenses_row = row
+    ws.write(row, 0, "Accrued Expenses", formats.line_item)
+    coord_idx = inputs.header_to_column["Accrued Expenses"]
+    for period in range(num_periods):
+        coord = coord_from_indices(period + 1, coord_idx)
+        ws.write_formula(row, FIRST_DATA_COLUMN + period, f"={sheet_ref(inputs.sheet, coord)}", formats.currency)
+    row += 1
+
+    ws.write(row, 0, "Accrued Taxes", formats.line_item)
+    write_constant_series(ws, row, num_periods, assumptions.liabilities["accrued_taxes"], formats.currency)
+    row += 1
+
+    other_current_liabilities_row = row
+    ws.write(row, 0, "Other Current Liabilities", formats.line_item)
+    coord_idx = inputs.header_to_column["Other Current Liabilities"]
+    for period in range(num_periods):
+        coord = coord_from_indices(period + 1, coord_idx)
+        ws.write_formula(row, FIRST_DATA_COLUMN + period, f"={sheet_ref(inputs.sheet, coord)}", formats.currency)
+    row += 1
+
+    total_current_liabilities_row = row
+    ws.write(row, 0, "Total Current Liabilities", formats.line_item_bold)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{accounts_payable_row + 1}:{col_let}{row})",
+            formats.currency,
+        )
+    row += 2
+
+    write_section("Long-term Liabilities")
+
+    long_term_start_row = row
+    for label, key in (
+        ("Long Term Debt", "long_term_debt"),
+        ("Deferred Tax Liabilities", "deferred_tax_liabilities"),
+        ("Other Liabilities", "other_liabilities"),
+    ):
+        ws.write(row, 0, label, formats.line_item)
+        write_constant_series(ws, row, num_periods, assumptions.liabilities[key], formats.currency)
+        row += 1
+    long_term_end_row = row - 1
+
+    total_liabilities_row = row
+    ws.write(row, 0, "Total Liabilities", formats.line_item_bold)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{accounts_payable_row + 1}:{col_let}{long_term_end_row + 1})",
+            formats.currency,
+        )
+    row += 2
+
+    write_section("Equity")
+
+    equity_start_row = row
+    for label, key in (
+        ("Paid In Capital", "paid_in_capital"),
+        ("Common Stock", "common_stock"),
+        ("Preferred Stock", "preferred_stock"),
+        ("Capital Round 1", "capital_round_1"),
+        ("Capital Round 2", "capital_round_2"),
+        ("Capital Round 3", "capital_round_3"),
+    ):
+        ws.write(row, 0, label, formats.line_item)
+        write_constant_series(ws, row, num_periods, assumptions.equity[key], formats.currency)
+        row += 1
+
+    retained_earnings_row = row
+    ws.write(row, 0, "Retained Earnings", formats.line_item)
+    first_income_col = col_letter(FIRST_DATA_COLUMN)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM('{income.sheet}'!{first_income_col}{income.net_income_row + 1}:'{income.sheet}'!{col_let}{income.net_income_row + 1})",
+            formats.currency,
+        )
+    row += 1
+
+    total_equity_row = row
+    ws.write(row, 0, "Total Equity", formats.line_item_bold)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{equity_start_row + 1}:{col_let}{retained_earnings_row + 1})",
+            formats.currency,
+        )
+    row += 2
+
+    total_liab_equity_row = row
+    ws.write(row, 0, "Total Liabilities & Equity", formats.line_item_bold)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{total_liabilities_row + 1}+{col_let}{total_equity_row + 1}",
+            formats.currency,
+        )
+    row += 1
+
+    ws.write(row, 0, "Balance Check", formats.line_item)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{total_assets_row + 1}-{col_let}{total_liab_equity_row + 1}",
+            formats.currency,
+        )
+
+    ws.set_column(0, 0, 42)
+    ws.set_column(1, FIRST_DATA_COLUMN + num_periods, 18)
+    ws.freeze_panes(2, 1)
+
+    return BalanceSheetContext(
+        sheet=sheet,
+        cash_row=cash_row,
+        accounts_receivable_row=accounts_receivable_row,
+        inventory_row=inventory_row,
+        total_oca_row=total_oca_row,
+        accounts_payable_row=accounts_payable_row,
+        accrued_expenses_row=accrued_expenses_row,
+        other_current_liabilities_row=other_current_liabilities_row,
+        total_current_liabilities_row=total_current_liabilities_row,
+        total_assets_row=total_assets_row,
+        total_liabilities_row=total_liabilities_row,
+        total_equity_row=total_equity_row,
+        total_liab_equity_row=total_liab_equity_row,
+    )
+
+
+def build_cash_flow_sheet(
+    wb: xlsxwriter.Workbook,
+    num_periods: int,
+    start_date,
+    formats: WorkbookFormats,
+    assumptions: AssumptionsContext,
+    inputs: InputsContext,
+    income: IncomeStatementContext,
+    balance: BalanceSheetContext,
+) -> None:
+    sheet = "Cash Flow"
+    ws = wb.add_worksheet(sheet)
+
+    ws.merge_range(0, 0, 0, FIRST_DATA_COLUMN + num_periods - 1, "Statement of Cash Flows", formats.header_blue)
+    for period in range(num_periods):
+        ws.write_datetime(1, FIRST_DATA_COLUMN + period, start_date + relativedelta(months=period), formats.date_month)
+
+    balance_ws = wb.get_worksheet_by_name(balance.sheet)
+    if balance_ws is None:
+        raise RuntimeError("Balance Sheet worksheet not found")
+
+    row = 2
+
+    def write_section(title: str) -> None:
+        nonlocal row
+        ws.write(row, 0, title, formats.section_header)
+        for col in range(1, FIRST_DATA_COLUMN + num_periods):
+            ws.write(row, col, "", formats.section_header)
+        row += 1
+
+    def balance_ref(row_idx: int, period: int) -> str:
+        col_idx = FIRST_DATA_COLUMN + period
+        return f"'{balance.sheet}'!{col_letter(col_idx)}{row_idx + 1}"
+
+    write_section("Operations")
+
+    net_income_row = row
+    ws.write(row, 0, "Net Income", formats.line_item)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        ws.write_formula(
+            row,
+            col_idx,
+            f"='{income.sheet}'!{col_letter(col_idx)}{income.net_income_row + 1}",
+            formats.currency,
+        )
+    row += 1
+
+    depreciation_row = row
+    ws.write(row, 0, "Depreciation", formats.line_item)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        ws.write_formula(
+            row,
+            col_idx,
+            f"='{income.sheet}'!{col_letter(col_idx)}{income.depreciation_row + 1}",
+            formats.currency,
+        )
+    row += 1
+
+    amortization_row = row
+    ws.write(row, 0, "Amortization", formats.line_item)
+    for period in range(num_periods):
+        col_idx = FIRST_DATA_COLUMN + period
+        ws.write_formula(
+            row,
+            col_idx,
+            f"='{income.sheet}'!{col_letter(col_idx)}{income.amortization_row + 1}",
+            formats.currency,
+        )
+    row += 1
+
+    write_section("Change in Working Capital")
+
+    def write_balance_delta(label: str, balance_row: int, beginning_refs: List[str], is_asset: bool) -> None:
+        nonlocal row
+        ws.write(row, 0, label, formats.line_item)
+        beginning_expr = "+".join(beginning_refs)
         for period in range(num_periods):
-            col = period + 1
-            balance_ws.write_formula(row_idx, col, f"={ref}", currency_fmt)
-        row_idx += 1
+            col_idx = FIRST_DATA_COLUMN + period
+            if period == 0:
+                if is_asset:
+                    formula = f"=({beginning_expr})-{balance_ref(balance_row, period)}"
+                else:
+                    formula = f"={balance_ref(balance_row, period)}-({beginning_expr})"
+            else:
+                prev_balance = balance_ref(balance_row, period - 1)
+                curr_balance = balance_ref(balance_row, period)
+                if is_asset:
+                    formula = f"={prev_balance}-{curr_balance}"
+                else:
+                    formula = f"={curr_balance}-{prev_balance}"
+            ws.write_formula(row, col_idx, formula, formats.currency)
+        row += 1
 
-    # Accrued expenses
-    balance_ws.write(row_idx, 0, "Accrued Expenses", line_item)
+    write_balance_delta(
+        "Accounts Receivable",
+        balance.accounts_receivable_row,
+        [assumptions.beginning_balances["accounts_receivable"]],
+        is_asset=True,
+    )
+    write_balance_delta(
+        "Inventory",
+        balance.inventory_row,
+        [assumptions.beginning_balances["inventory"]],
+        is_asset=True,
+    )
+    write_balance_delta(
+        "Other Current Assets",
+        balance.total_oca_row,
+        [assumptions.beginning_balances[key] for key in assumptions.oca_keys],
+        is_asset=True,
+    )
+    write_balance_delta(
+        "Accounts Payable",
+        balance.accounts_payable_row,
+        [assumptions.beginning_balances["accounts_payable"]],
+        is_asset=False,
+    )
+    write_balance_delta(
+        "Accrued Expenses",
+        balance.accrued_expenses_row,
+        [assumptions.beginning_balances["accrued_expenses"]],
+        is_asset=False,
+    )
+    write_balance_delta(
+        "Other Current Liabilities",
+        balance.other_current_liabilities_row,
+        [assumptions.beginning_balances["other_current_liabilities"]],
+        is_asset=False,
+    )
+
+    operations_sum_start = net_income_row
+    operations_sum_end = row - 1
+
+    cash_from_operations_row = row
+    ws.write(row, 0, "Cash Flow from Operations", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"={sheet_ref(inputs_title, f'$E${period + 2}')}", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"=SUM({col_let}{operations_sum_start + 1}:{col_let}{operations_sum_end + 1})",
+            formats.currency,
+        )
+    row += 2
 
-    # Accrued taxes
-    balance_ws.write(row_idx, 0, "Accrued Taxes", line_item)
-    accrued_tax_ref = sheet_ref(assumptions_title, make_absolute(liability_refs['accrued_taxes']))
+    write_section("Investing Activities")
+    investing_row = row
+    ws.write(row, 0, "Net Cash from Investing", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"={accrued_tax_ref}", currency_fmt)
-    row_idx += 1
+        ws.write_number(row, FIRST_DATA_COLUMN + period, 0)
+    row += 2
 
-    # Other current liabilities
-    balance_ws.write(row_idx, 0, "Other Current Liabilities", line_item)
+    write_section("Financing Activities")
+    financing_row = row
+    ws.write(row, 0, "Net Cash from Financing", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        balance_ws.write_formula(row_idx, col, f"={sheet_ref(inputs_title, f'$F${period + 2}')}", currency_fmt)
-    row_idx += 1
+        ws.write_number(row, FIRST_DATA_COLUMN + period, 0)
+    row += 2
 
-    # Total current liabilities
-    total_current_liab_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Current Liabilities", line_item_bold)
+    beginning_cash_row = row
+    ws.write(row, 0, "Beginning Cash Balance", formats.line_item_bold)
+    row += 1
+
+    change_in_cash_row = row
+    ws.write(row, 0, "Change in Cash", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"=SUM({col_let}{current_liab_start + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{cash_from_operations_row + 1}+{col_let}{investing_row + 1}+{col_let}{financing_row + 1}",
+            formats.currency,
+        )
+    row += 1
 
-    # Long-term liabilities
-    row_idx += 1
-    balance_ws.write(row_idx, 0, "Long-term Liabilities", section_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    lt_liab_start = row_idx
-    lt_liability_items = [
-        ("Long Term Debt", liability_refs['long_term_debt']),
-        ("Deferred Tax Liabilities", liability_refs['deferred_tax_liabilities']),
-        ("Other Liabilities", liability_refs['other_liabilities']),
-    ]
-
-    for label, coord in lt_liability_items:
-        balance_ws.write(row_idx, 0, label, line_item)
-        ref = sheet_ref(assumptions_title, make_absolute(coord))
-        for period in range(num_periods):
-            col = period + 1
-            balance_ws.write_formula(row_idx, col, f"={ref}", currency_fmt)
-        row_idx += 1
-
-    # Total long-term liabilities
-    total_lt_liab_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Long-term Liabilities", line_item_bold)
+    ending_cash_row = row
+    ws.write(row, 0, "Ending Cash Balance", formats.line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"=SUM({col_let}{lt_liab_start + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
+        col_idx = FIRST_DATA_COLUMN + period
+        col_let = col_letter(col_idx)
+        ws.write_formula(
+            row,
+            col_idx,
+            f"={col_let}{beginning_cash_row + 1}+{col_let}{change_in_cash_row + 1}",
+            formats.currency,
+        )
+    row += 1
 
-    # Total liabilities
-    row_idx += 1
-    total_liab_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Liabilities", line_item_bold)
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"={col_let}{total_current_liab_row + 1}+{col_let}{total_lt_liab_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Equity
-    row_idx += 1
-    balance_ws.write(row_idx, 0, "Equity", section_header)
-    for col in range(1, num_periods + 1):
-        balance_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    equity_start = row_idx
-    for label, key in equity_labels:
-        balance_ws.write(row_idx, 0, label, line_item)
-        ref = sheet_ref(assumptions_title, make_absolute(equity_refs[key]))
-        for period in range(num_periods):
-            col = period + 1
-            balance_ws.write_formula(row_idx, col, f"={ref}", currency_fmt)
-        row_idx += 1
-
-    # Retained earnings
-    retained_row = row_idx
-    balance_ws.write(row_idx, 0, "Retained Earnings", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"=SUM('Income Statement'!{col_let}{net_income_row + 1}:'Income Statement'!{col_let}{net_income_row + 1})", currency_fmt)
-    row_idx += 1
-
-    # Total equity
-    total_equity_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Equity", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"=SUM({col_let}{equity_start + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
-
-    # Total liabilities & equity
-    row_idx += 1
-    total_liab_equity_row = row_idx
-    balance_ws.write(row_idx, 0, "Total Liabilities & Equity", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"={col_let}{total_liab_row + 1}+{col_let}{total_equity_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Balance check
-    balance_ws.write(row_idx, 0, "Balance Check", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(row_idx, col, f"={col_let}{total_assets_row + 1}-{col_let}{total_liab_equity_row + 1}", currency_fmt)
-
-    balance_ws.set_column(0, 0, 35)
-    balance_ws.set_column(1, num_periods, 12)
-    balance_ws.freeze_panes(2, 1)
-
-    # Cash Flow Statement (HORIZONTAL/PIVOTED)
-    cashflow_ws = wb.add_worksheet("Cash Flow")
-
-    cashflow_ws.merge_range(0, 0, 0, num_periods, "Statement of Cash Flows", header_blue)
-
-    for idx in range(num_periods):
-        period_date = start_date + relativedelta(months=idx)
-        cashflow_ws.write_datetime(1, idx + 1, period_date, date_month_fmt)
-
-    row_idx = 2
-
-    # Operations
-    cashflow_ws.write(row_idx, 0, "Operations", section_header)
-    for col in range(1, num_periods + 1):
-        cashflow_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    # Net income
-    cf_ni_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Net Income", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        cashflow_ws.write_formula(row_idx, col, f"='Income Statement'!{col_let}{net_income_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Depreciation
-    cashflow_ws.write(row_idx, 0, "Depreciation", line_item)
-    depr_ref = sheet_ref(assumptions_title, make_absolute(depreciation_coord))
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write_formula(row_idx, col, f"={depr_ref}", currency_fmt)
-    row_idx += 1
-
-    # Amortization
-    cashflow_ws.write(row_idx, 0, "Amortization", line_item)
-    amort_ref = sheet_ref(assumptions_title, make_absolute(amortization_coord))
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write_formula(row_idx, col, f"={amort_ref}", currency_fmt)
-    row_idx += 1
-
-    # Change in current assets
-    row_idx += 1
-    cashflow_ws.write(row_idx, 0, "Change in Current Assets", subsection_header)
-    for col in range(1, num_periods + 1):
-        cashflow_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    # Change AR
-    cashflow_ws.write(row_idx, 0, "Accounts Receivable", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
+        col_idx = FIRST_DATA_COLUMN + period
         if period == 0:
-            beg_ar_ref = sheet_ref(assumptions_title, make_absolute(beginning_refs['accounts_receivable']))
-            cashflow_ws.write_formula(row_idx, col, f"={beg_ar_ref}-'Balance Sheet'!{col_let}{ar_row + 1}", currency_fmt)
+            ws.write_formula(beginning_cash_row, col_idx, f"={assumptions.beginning_balances['cash']}", formats.currency)
         else:
-            prev_col = col_letter(col - 1)
-            cashflow_ws.write_formula(row_idx, col, f"='Balance Sheet'!{prev_col}{ar_row + 1}-'Balance Sheet'!{col_let}{ar_row + 1}", currency_fmt)
-    row_idx += 1
+            prev_col = col_letter(col_idx - 1)
+            ws.write_formula(beginning_cash_row, col_idx, f"={prev_col}{ending_cash_row + 1}", formats.currency)
 
-    # Change inventory
-    cashflow_ws.write(row_idx, 0, "Inventory", line_item)
+    ws.set_column(0, 0, 40)
+    ws.set_column(1, FIRST_DATA_COLUMN + num_periods, 18)
+    ws.freeze_panes(2, 1)
+
     for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        if period == 0:
-            beg_inv_ref = sheet_ref(assumptions_title, make_absolute(beginning_refs['inventory']))
-            cashflow_ws.write_formula(row_idx, col, f"={beg_inv_ref}-'Balance Sheet'!{col_let}{inventory_row + 1}", currency_fmt)
-        else:
-            prev_col = col_letter(col - 1)
-            cashflow_ws.write_formula(row_idx, col, f"='Balance Sheet'!{prev_col}{inventory_row + 1}-'Balance Sheet'!{col_let}{inventory_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Change OCA
-    cashflow_ws.write(row_idx, 0, "Other Current Assets", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        if period == 0:
-            beg_oca_sum = "+".join([sheet_ref(assumptions_title, make_absolute(beginning_refs[key])) for key in ["other_receivable", "prepaid_expenses", "prepaid_insurance", "unbilled_revenue", "other_current_assets"]])
-            cashflow_ws.write_formula(row_idx, col, f"=({beg_oca_sum})-'Balance Sheet'!{col_let}{total_oca_row + 1}", currency_fmt)
-        else:
-            prev_col = col_letter(col - 1)
-            cashflow_ws.write_formula(row_idx, col, f"='Balance Sheet'!{prev_col}{total_oca_row + 1}-'Balance Sheet'!{col_let}{total_oca_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Change in current liabilities
-    row_idx += 1
-    cashflow_ws.write(row_idx, 0, "Change in Current Liabilities", subsection_header)
-    for col in range(1, num_periods + 1):
-        cashflow_ws.write(row_idx, col, "", subsection_header)
-    row_idx += 1
-
-    # Change AP
-    cashflow_ws.write(row_idx, 0, "Accounts Payable", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        if period == 0:
-            beg_ap_ref = sheet_ref(assumptions_title, make_absolute(beginning_refs['accounts_payable']))
-            cashflow_ws.write_formula(row_idx, col, f"='Balance Sheet'!{col_let}{ap_row + 1}-{beg_ap_ref}", currency_fmt)
-        else:
-            prev_col = col_letter(col - 1)
-            cashflow_ws.write_formula(row_idx, col, f"='Balance Sheet'!{col_let}{ap_row + 1}-'Balance Sheet'!{prev_col}{ap_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Deferred revenues (assumes constant, so zero change unless period 0)
-    cashflow_ws.write(row_idx, 0, "Deferred Revenues", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    # Current liabilities
-    cashflow_ws.write(row_idx, 0, "Current Liabilities", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    # Cash from operations
-    row_idx += 1
-    cf_from_ops_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Cash Flow from Operations", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        cashflow_ws.write_formula(row_idx, col, f"=SUM({col_let}{cf_ni_row + 1}:{col_let}{row_idx})", currency_fmt)
-    row_idx += 1
-
-    # Investing
-    row_idx += 1
-    cashflow_ws.write(row_idx, 0, "Investing", section_header)
-    for col in range(1, num_periods + 1):
-        cashflow_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    cashflow_ws.write(row_idx, 0, "Change in Fixed Assets", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    cf_from_investing_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Cash Flow from Investing", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    # Financing
-    row_idx += 1
-    cashflow_ws.write(row_idx, 0, "Financing", section_header)
-    for col in range(1, num_periods + 1):
-        cashflow_ws.write(row_idx, col, "", section_header)
-    row_idx += 1
-
-    cashflow_ws.write(row_idx, 0, "Net Change in Credit Card/ Notes Payable", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    cashflow_ws.write(row_idx, 0, "Net borrowings (payments) on debt", line_item)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    cf_from_financing_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Cash Flow from Financing", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        cashflow_ws.write(row_idx, col, 0, currency_fmt)
-    row_idx += 1
-
-    # Net change
-    row_idx += 1
-    cf_beg_cash_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Beginning Cash Balance", line_item_bold)
-    row_idx += 1
-
-    cf_change_cash_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Change in Cash", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        cashflow_ws.write_formula(row_idx, col, f"={col_let}{cf_from_ops_row + 1}+{col_let}{cf_from_investing_row + 1}+{col_let}{cf_from_financing_row + 1}", currency_fmt)
-    row_idx += 1
-
-    cf_end_cash_row = row_idx
-    cashflow_ws.write(row_idx, 0, "Ending Cash Balance", line_item_bold)
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        cashflow_ws.write_formula(row_idx, col, f"={col_let}{cf_beg_cash_row + 1}+{col_let}{cf_change_cash_row + 1}", currency_fmt)
-    row_idx += 1
-
-    # Now fill in beginning cash with proper references
-    beg_cash_ref = sheet_ref(assumptions_title, make_absolute(beginning_refs['cash']))
-    for period in range(num_periods):
-        col = period + 1
-        if period == 0:
-            cashflow_ws.write_formula(cf_beg_cash_row, col, f"={beg_cash_ref}", currency_fmt)
-        else:
-            prev_col = col_letter(col - 1)
-            cashflow_ws.write_formula(cf_beg_cash_row, col, f"={prev_col}{cf_end_cash_row + 1}", currency_fmt)
-
-    cashflow_ws.set_column(0, 0, 35)
-    cashflow_ws.set_column(1, num_periods, 12)
-    cashflow_ws.freeze_panes(2, 1)
-
-    # Now fix the cash reference in balance sheet
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(cash_row, col, f"='Cash Flow'!{col_let}{cf_end_cash_row + 1}", currency_fmt)
-
-    # Fix retained earnings to cumulative sum
-    for period in range(num_periods):
-        col = period + 1
-        col_let = col_letter(col)
-        balance_ws.write_formula(retained_row, col, f"=SUM('Income Statement'!$B${net_income_row + 1}:'Income Statement'!{col_let}{net_income_row + 1})", currency_fmt)
-
-    wb.close()
+        col_idx = FIRST_DATA_COLUMN + period
+        balance_ws.write_formula(
+            balance.cash_row,
+            col_idx,
+            f"='{sheet}'!{col_letter(col_idx)}{ending_cash_row + 1}",
+            formats.currency,
+        )
 
 
 def main() -> None:
